@@ -1,40 +1,41 @@
-from flask import Flask, request, send_file, send_from_directory
-from flask_cors import CORS
 import torch
-from transformers import SpeechT5Processor, SpeechT5ForTextToSpeech, SpeechT5HifiGan
-from datasets import load_dataset
-import soundfile as sf
-import os
+import torchaudio
+import numpy as np
+from transformers import VitsModel, AutoTokenizer
 
-app = Flask(__name__)
-CORS(app)
+# Check if CUDA is available and set the device accordingly
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(f"Using device: {device}")
 
-# Load models and processor
-processor = SpeechT5Processor.from_pretrained("microsoft/speecht5_tts")
-model = SpeechT5ForTextToSpeech.from_pretrained("microsoft/speecht5_tts")
-vocoder = SpeechT5HifiGan.from_pretrained("microsoft/speecht5_hifigan")
+# Define the model name
+model_name = "facebook/mms-tts-eng"
 
-# Load xvector containing speaker's voice characteristics
-embeddings_dataset = load_dataset("Matthijs/cmu-arctic-xvectors", split="validation")
-speaker_embeddings = torch.tensor(embeddings_dataset[7306]["xvector"]).unsqueeze(0)
+# Load the tokenizer and model
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = VitsModel.from_pretrained(model_name).to(device)
 
-@app.route('/')
-def index():
-    return send_from_directory('.', 'index.html')
+# Prepare the text input
+text = "Hello, I am Abiel from India and I love Jesus Christ."
 
-@app.route('/tts', methods=['POST'])
-def text_to_speech():
-    text = request.json['text']
-    
-    inputs = processor(text=text, return_tensors="pt")
-    
-    speech = model.generate_speech(inputs["input_ids"], speaker_embeddings, vocoder=vocoder)
-    
-    # Save the audio to a file
-    output_file = "output.wav"
-    sf.write(output_file, speech.numpy(), samplerate=16000)
-    
-    return send_file(output_file, mimetype="audio/wav")
+# Tokenize the input
+inputs = tokenizer(text, return_tensors="pt").to(device)
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
+# Generate speech
+with torch.no_grad():
+    output = model(**inputs).waveform
+
+# Convert the output tensor to a numpy array
+audio = output.cpu().numpy().squeeze()
+
+# Normalize the audio
+audio = audio / np.abs(audio).max()
+
+# Save the audio to a file
+sample_rate = model.config.sampling_rate
+torchaudio.save("natural_tts_output.wav", torch.tensor(audio).unsqueeze(0), sample_rate)
+
+print("Speech generated and saved as 'natural_tts_output.wav'")
+
+# Optional: Play the audio (if you're running this in an environment with audio output)
+# import IPython.display as ipd
+# ipd.display(ipd.Audio(audio, rate=sample_rate))
